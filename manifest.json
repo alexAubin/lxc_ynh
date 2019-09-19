@@ -1,0 +1,34 @@
+{
+    "name": "LXC",
+    "id": "lxc",
+    "packaging_format": 1,
+    "version": "0.1~ynh1",
+    "description": {
+        "en": "Setup empty and LXC container (using LXD)",
+        "fr": "Installe un container LXC vide (avec LXD)"
+    },
+    "license": "WTFPL",
+    "maintainer": {
+        "name": "alexAubin",
+        "email": "alex.aubin@mailoo.org"
+    },
+    "requirements": {
+        "yunohost": ">= 3.6.0"
+    },
+    "multi_instance": false,
+    "services": [
+    ],
+    "arguments": {
+        "install" : [
+            {
+                "name": "name",
+                "type": "string",
+                "ask": {
+                    "en": "Choose a name for this LXC",
+                    "fr": "Choisissez un nom pour ce LXC"
+                },
+                "example": "foobar"
+            }
+        ]
+    }
+}

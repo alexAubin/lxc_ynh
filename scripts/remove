@@ -1,0 +1,43 @@
+#!/bin/bash
+
+#=================================================
+# GENERIC START
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+source /usr/share/yunohost/helpers
+
+#=================================================
+# MANAGE SCRIPT FAILURE
+#=================================================
+
+app=$YNH_APP_INSTANCE_NAME
+CONTIANER=$(ynh_app_setting_get "$app" container)
+
+readonly BRIDGE=ynhbr0
+readonly BRIDGE_CONF=/etc/network/interfaces.d/$BRIDGE.cfg
+
+#=================================================
+# Remove network bridge
+#=================================================
+ynh_script_progression --message="Remove network bridge..." --weight=1
+
+apt remove bridge-utils -y
+rm -f $BRIDGE_CONF 
+ifdown $BRIDGE
+
+rm /etc/sysctl.d/ynhbr0.conf
+
+#=================================================
+# INSTALL SNAPD AND LXD
+#=================================================
+ynh_script_progression --message="Remove LXD and snapd..." --weight=1
+
+snapd remove lxd
+apt remove snapd --purge -y
+
+#=================================================
+# RELOAD NGINX
+#=================================================
+ynh_script_progression --message="Removal of $app completed" --last

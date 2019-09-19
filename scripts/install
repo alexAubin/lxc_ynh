@@ -1,0 +1,153 @@
+#!/bin/bash
+
+#=================================================
+# GENERIC START
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
+
+source /usr/share/yunohost/helpers
+
+#=================================================
+# MANAGE SCRIPT FAILURE
+#=================================================
+
+# Exit if an error occurs during the execution of the script
+ynh_abort_if_errors
+
+#=================================================
+# RETRIEVE ARGUMENTS FROM THE MANIFEST
+#=================================================
+
+app=$YNH_APP_INSTANCE_NAME
+CONTAINER=$YNH_APP_ARG_NAME
+
+readonly BRIDGE=ynhbr0
+readonly IP_RANGE=10.13.12
+readonly BRIDGE_CONF=/etc/network/interfaces.d/$BRIDGE.cfg
+readonly MAIN_INTERFACE=$(ip route | grep default | awk '{print $5}')
+readonly DEFAULT_DNS=80.67.169.12 # This is FDN
+
+#=================================================
+# STORE SETTINGS FROM MANIFEST
+#=================================================
+ynh_script_progression --message="Storing installation settings..." --weight=1
+
+ynh_app_setting_set $app container $container
+
+#=================================================
+# INSTALL SNAPD AND LXD
+#=================================================
+ynh_script_progression --message="Install snapd and LXD..." --weight=1
+
+apt install snapd -y
+LINE_TO_ADD="PATH=$PATH:/snap/bin"
+grep -q "$LINE_TO_ADD" ~/.bashrc || echo "PATH=$PATH:/snap/bin" >> ~/.bashrc
+PATH=$PATH:/snap/bin
+
+# Install lxd using snap
+snap install lxd
+
+#=================================================
+# SETUP NETWORK BRIDGE MANUALLY
+# to avoid lxd to run its own bridge with dnsmasq 
+# which conflicts with yunohost' dnsmasq
+#=================================================
+ynh_script_progression --message="Configure network bridge..." --weight=1
+
+apt install bridge-utils -y
+cat <<EOF > $BRIDGE_CONF 
+auto $BRIDGE
+iface $BRIDGE inet static
+        address $IP_RANGE.1/24
+        bridge_ports none
+        bridge_fd 0
+        bridge_maxwait 0
+EOF
+ifup $BRIDGE --interfaces=$BRIDGE_CONF
+
+
+# FIXME : Gotta redo this at each reboot of the host ? Transform into a ynh-firewall hook ?
+echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/ynhbr0.conf
+sysctl -p /etc/sysctl.d/ynhbr0.conf
+iptables -A FORWARD -i $BRIDGE -o "$MAIN_INTERFACE" -j ACCEPT
+iptables -A FORWARD -i "$MAIN_INTERFACE" -o $BRIDGE -j ACCEPT
+iptables -t nat -A POSTROUTING -s $IP_RANGE.0/24 -j MASQUERADE
+
+#=================================================
+# INITIALIZE LXD
+#=================================================
+ynh_script_progression --message="Initialize LXD..." --weight=1
+
+cat <<EOF  /tmp/lxd.init.preseed
+config: {}
+networks: []
+storage_pools:
+- config:
+    size: 15GB
+  description: ""
+  name: default
+  driver: btrfs
+profiles:
+- config: {}
+  description: ""
+  devices:
+    $MAIN_INTERFACE:
+      name: $MAIN_INTERFACE
+      nictype: bridged
+      parent: $BRIDGE
+      type: nic
+    root:
+      path: /
+      pool: default
+      type: disk
+  name: default
+cluster: null
+EOF
+
+lxd init --preseed < /tmp/lxd.init.preseed
+
+#=================================================
+# CREATE THE CONTAINER
+#=================================================
+ynh_script_progression --message="Create the container..." --weight=1
+
+lxc launch images:debian/stretch/amd64 $CONTAINER
+
+#=================================================
+# CONFIGURE NETWORK
+#=================================================
+ynh_script_progression --message="Configure container's network..." --weight=1
+
+# Gotta configure network interfaces and dns manually
+# FIXME : for multi instance installs, gotta find a way to attribute the right ip
+
+cat <<EOF > /tmp/$CONTAINER.interfaces.conf
+# The loopback network interface
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+	address $IP_RANGE.2/24
+	gateway $IP_RANGE.1
+
+source /etc/network/interfaces.d/*.cfg
+EOF
+lxc file push -- /tmp/$CONTAINER.interfaces.conf $CONTAINER/etc/network/interfaces
+
+cat <<EOF > /tmp/$CONTAINER.resolv.conf
+nameserver $DEFAULT_DNS
+EOF
+lxc file push -- /tmp/$CONTAINER.resolv.conf $CONTAINER/etc/resolv.conf
+
+# Restart it so that network stuff propagates
+ynh_script_progression --message="Restart container..." --weight=1
+
+lxc exec $CONTAINER -- poweroff
+lxc start $CONTAINER
+
+#=================================================
+# RELOAD NGINX
+#=================================================
+ynh_script_progression --message="Installation of $app completed" --last
