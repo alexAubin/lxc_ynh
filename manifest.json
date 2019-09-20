@@ -5,7 +5,7 @@
     "version": "0.1~ynh1",
     "description": {
         "en": "Set up an empty LXC container (using LXD)",
-        "fr": "Installé un container LXC vide (avec LXD)"
+        "fr": "Installe un container LXC vide (avec LXD)"
     },
     "license": "WTFPL",
     "maintainer": {
